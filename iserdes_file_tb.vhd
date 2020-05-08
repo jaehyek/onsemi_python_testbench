@@ -347,6 +347,19 @@ ARCHITECTURE behavior OF tb_file IS
 	signal packet_payload_valid      : std_logic;
 	signal csi_in_frame, csi_in_line : std_logic;
 
+	signal synccode_framestart : std_logic;
+	signal synccode_frameend   : std_logic;
+	signal synccode_linestart  : std_logic;
+	signal synccode_lineend    : std_logic;
+	signal synccode_img        : std_logic;
+	signal synccode_crc        : std_logic;
+	signal synccode_tr         : std_logic;
+
+	signal payload       : std_logic_vector(39 downto 0 ) ;
+	signal payload_valid : std_logic ;
+	signal in_frame_d    : std_logic ;
+	signal in_line_d     : std_logic ;
+
 	--------------------------------------------------------------------------
 
 	signal byte_align_data : std_logic_vector(49 downto 0);
@@ -451,7 +464,7 @@ ARCHITECTURE behavior OF tb_file IS
 	component csi_rx_packet_handler is
 
 		port (
-			clock 			: in STD_LOGIC;                            --word clock in
+			clock           : in  STD_LOGIC;                      --word clock in
 			reset           : in  STD_LOGIC;                      --asynchronous active high reset
 			enable          : in  STD_LOGIC;                      --active high enable
 			i_data          : in  STD_LOGIC_VECTOR (49 downto 0); --i_data in from word aligner
@@ -1028,22 +1041,78 @@ BEGIN
 	word_data  <= word_align_data;
 	reset_out  <= serdes_reset;
 
+	----------------------------------------------------------------------------
+	----------------------------------------------------------------------------
+	-- depacket : csi_rx_packet_handler
 
-	depacket : csi_rx_packet_handler
-		port map (
-			clock           => byte_clock_int,       -- in 
-			reset           => serdes_reset,         -- in 
-			enable          => enable,               -- in 
-			i_data          => word_align_data,      -- in 
-			i_data_valid    => word_valid,           -- in 
-			sync_wait       => wait_for_sync,        -- out
-			packet_done     => packet_done,          -- out
-			o_payload       => packet_payload,       -- out
-			o_payload_valid => packet_payload_valid, -- out
-			o_frame         => csi_in_frame,         -- out
-			o_line          => csi_in_line           -- out
-		);
+	synccode_framestart <= '1' when word_align_data( 9+ 40 downto 7 + 40) = "101" else '0' ;
+	synccode_frameend   <= '1' when word_align_data( 9+ 40 downto 7 + 40) = "110" else '0' ;
+	synccode_linestart  <= '1' when word_align_data( 9+ 40 downto 7 + 40) = "001" else '0' ;
+	synccode_lineend    <= '1' when word_align_data( 9+ 40 downto 7 + 40) = "010" else '0' ;
+	synccode_img        <= '1' when word_align_data( 9+ 40 downto 0 + 40) = x"035" else '0' ;
+	synccode_crc        <= '1' when word_align_data( 9+ 40 downto 0 + 40) = x"059" else '0' ;
+	synccode_tr         <= '1' when word_align_data( 9+ 40 downto 0 + 40) = x"3A6" else '0' ;
 
+	wait_for_sync   <= synccode_tr ;
+	packet_done <= synccode_crc;
+
+	csi_in_frame         <= in_frame_d;
+	csi_in_line          <= in_line_d ;
+	packet_payload       <= payload;
+	packet_payload_valid <= payload_valid;
+
+
+
+	process(serdes_reset, byte_clock_int)
+	begin
+		if rising_edge(byte_clock_int) then
+			if serdes_reset = '1' then
+
+				in_frame_d    <= '0';
+				in_line_d     <= '0';
+				payload_valid <= '0';
+
+			elsif enable = '1' and word_valid = '1' then
+
+				if( synccode_framestart = '1') then
+					in_frame_d <= '1' ;
+				elsif ( synccode_frameend = '1') then
+					in_frame_d <= '0' ;
+				end if ;
+
+
+				if(synccode_framestart = '1' or synccode_linestart = '1' ) then
+					in_line_d <= '1' ;
+				elsif ( synccode_lineend = '1') then
+					in_line_d <= '0' ;
+				end if ;
+
+				if( synccode_img = '1' ) then
+					payload_valid <= '1' ;
+					payload       <= word_align_data(39 downto 0 ) ;
+				else
+					payload_valid <= '0' ;
+				end if ;
+			end if ;
+		end if ;
+	end process ;
+
+	------------------------------------------------------------------------------
+	--depacket : csi_rx_packet_handler
+	--	port map (
+	--		clock           => byte_clock_int,       -- in 
+	--		reset           => serdes_reset,         -- in 
+	--		enable          => enable,               -- in 
+	--		i_data          => word_align_data,      -- in 
+	--		i_data_valid    => word_valid,           -- in 
+	--		sync_wait       => wait_for_sync,        -- out
+	--		packet_done     => packet_done,          -- out
+	--		o_payload       => packet_payload,       -- out
+	--		o_payload_valid => packet_payload_valid, -- out
+	--		o_frame         => csi_in_frame,         -- out
+	--		o_line          => csi_in_line           -- out
+	--	);
+	--------------------------------------------------------------------------------
 
 
 
