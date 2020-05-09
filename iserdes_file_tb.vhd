@@ -17,7 +17,7 @@ ARCHITECTURE behavior OF tb_file IS
 	file input_buf : text; -- text is keyword
 
 
-	constant period : TIME := 4 ns;
+	constant period : TIME := 2.78 ns;
 
 	constant fpga_series         : string  := "7SERIES";
 	constant dphy_term_en        : boolean := true; --Enable internal termination on all pairs
@@ -30,6 +30,52 @@ ARCHITECTURE behavior OF tb_file IS
 	constant d2_skew             : natural := 0;
 	constant d3_skew             : natural := 0;
 	constant generate_idelayctrl : boolean := true;
+
+	component csi_rx_byte_align is
+		port (
+        clock              : in  STD_LOGIC;                      --byte clock in, word_clock_int, align?´ ?˜ì§? ?žˆì§? ?•Š?‹¤.
+        reset              : in  STD_LOGIC;                      --from serdes_reset, synchronous active high reset
+        enable             : in  STD_LOGIC;                      --active high enable
+        deser_in           : in  STD_LOGIC_VECTOR (9 downto 0);  --raw data from ISERDES
+        packet_start       : in  STD_LOGIC;                      --when high will look for a sync pattern if sync not already found, from packet handler
+        packet_end_invalid : in  STD_LOGIC;                      --assert to reset synchronisation status                             , from packet handler
+        byte_valid         : out STD_LOGIC;                      --goes high as soon as sync pattern is found (so data out on next cycle contains header)
+        byte_align_data    : out STD_LOGIC_VECTOR (9 downto 0)
+        ); --aligned data out, typically delayed by 2 cycles
+	end component csi_rx_byte_align;
+
+	component csi_rx_word_align is
+		Port ( word_clock : in STD_LOGIC;                            --byte/word clock in
+        reset              : in  STD_LOGIC;                      --active high synchronous reset
+        enable             : in  STD_LOGIC;                      --active high enable
+        packet_end         : in  STD_LOGIC;                      --packet done input from packet handler entity
+        packet_start       : in  STD_LOGIC;                      --whether or not to be looking for an alignment
+        packet_end_invalid : out STD_LOGIC;                      --packet done output to byte aligners
+        byte_align_data    : in  STD_LOGIC_VECTOR (49 downto 0); --unaligned word from the 4 byte aligners
+        byte_valid         : in  STD_LOGIC_VECTOR (4 downto 0);  --word_valid from the byte aligners (MSB is index 3, LSB index 0)
+        word_align_data    : out STD_LOGIC_VECTOR (49 downto 0); --aligned word out to packet handler
+        word_valid         : out STD_LOGIC
+        );                     --goes high once alignment is valid, such that the first word with it high is the CSI packet header											 --aligned data out, typically delayed by 2 cycles
+	end component csi_rx_word_align;
+
+	component csi_rx_packet_handler is
+		Port ( clock : in STD_LOGIC;                            --word clock in
+		reset           : in  STD_LOGIC;                      --asynchronous active high reset
+		enable          : in  STD_LOGIC;                      --active high enable
+		i_data          : in  STD_LOGIC_VECTOR (49 downto 0); --i_data in from word aligner
+		i_data_valid    : in  STD_LOGIC;                      --i_data valid in from word aligner
+		packet_start    : out STD_LOGIC;                      --drives byte and word aligner wait_for_sync
+		packet_end      : out STD_LOGIC;                      --drives word aligner packet_end
+		o_payload       : out STD_LOGIC_VECTOR(39 downto 0);  --payload out from long video packets
+		o_payload_valid : out STD_LOGIC;                      --whether or not payload output is valid (i.e. currently receiving a long packet)
+
+		o_frame : out STD_LOGIC; --whether or not currently in video frame (i.e. got FS but not FE)
+		o_line  : out STD_LOGIC  --whether or not receiving video line
+
+		);
+	end component csi_rx_packet_handler;
+
+
 
 
 
@@ -49,7 +95,7 @@ ARCHITECTURE behavior OF tb_file IS
 	-- csi_rx_packet_handler 
 	signal enable               : std_logic;
 	signal packet_start         : std_logic;
-	signal packet_done          : std_logic;
+	signal packet_end           : std_logic;
 	signal packet_payload_valid : std_logic;
 	signal packet_payload       : std_logic_vector(39 downto 0);
 	signal csi_in_frame         : std_logic;
@@ -65,7 +111,7 @@ BEGIN
 	inclk_p <= NOT inclk_p after period/2;
 
 	reset          <= '1', '0' after period;
-	byte_clock_int <= inclk_p;
+	enable <= '1';
 
 
 	----------------------------------------------------------------------------
@@ -142,6 +188,7 @@ BEGIN
 
 			deser_data   <= file_deser_data ;
 			serdes_reset <= file_serdes_reset ;
+			byte_clock_int <= file_byte_clock_int;
 
 			wait for period;
 
