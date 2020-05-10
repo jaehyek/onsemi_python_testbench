@@ -111,6 +111,7 @@ BEGIN
 	inclk_p <= NOT inclk_p after period/2;
 
 	reset          <= '1', '0' after period;
+	serdes_reset   <= '1', '0' after period;
 	enable <= '1';
 
 
@@ -187,7 +188,7 @@ BEGIN
 			assert good report "Text I/O read error: file_packet_done" severity ERROR;
 
 			deser_data   <= file_deser_data ;
-			serdes_reset <= file_serdes_reset ;
+			-- serdes_reset <= file_serdes_reset ;
 			byte_clock_int <= file_byte_clock_int;
 
 			wait for period;
